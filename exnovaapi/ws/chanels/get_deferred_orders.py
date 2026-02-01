@@ -1,18 +1,18 @@
 from exnovaapi.ws.chanels.base import Base
 import time
-import exnovaapi.global_value as global_value
+
 class GetDeferredOrders(Base):
-    
+
     name = "sendMessage"
 
     def __call__(self,instrument_type):
-     
+
         data = {"name":"get-deferred-orders",
                 "version":"1.0",
                 "body":{
-                        "user_balance_id":int(global_value.balance_id),
-                        "instrument_type":instrument_type                 
-                     
+                        "user_balance_id":int(self.api.context.balance_id),
+                        "instrument_type":instrument_type
+
                         }
                 }
 

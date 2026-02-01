@@ -4,7 +4,6 @@ import json
 import logging
 import websocket
 import exnovaapi.constants as OP_code
-import exnovaapi.global_value as global_value
 from threading import Thread
 from exnovaapi.ws.received.technical_indicators import technical_indicators
 from exnovaapi.ws.received.time_sync import time_sync
@@ -101,7 +100,7 @@ class WebsocketClient(object):
 
     def on_message(self, wss, message):  # pylint: disable=unused-argument
         """Method to process websocket messages."""
-        global_value.ssl_Mutual_exclusion = True
+        self.api.context.ssl_Mutual_exclusion = True
         logger = logging.getLogger(__name__)
         logger.debug(message)
 
@@ -165,24 +164,22 @@ class WebsocketClient(object):
         users_availability(self.api, message)
         client_price_generated(self.api, message)
 
-        global_value.ssl_Mutual_exclusion = False
+        self.api.context.ssl_Mutual_exclusion = False
 
-    @staticmethod
-    def on_error(wss, error):  # pylint: disable=unused-argument
+    def on_error(self, wss, error):  # pylint: disable=unused-argument
         """Method to process websocket errors."""
         logger = logging.getLogger(__name__)
         logger.error(error)
-        global_value.websocket_error_reason = str(error)
-        global_value.check_websocket_if_error = True
+        self.api.context.websocket_error_reason = str(error)
+        self.api.context.check_websocket_if_error = True
 
-    @staticmethod
-    def on_open(wss):  # pylint: disable=unused-argument
+    def on_open(self, wss):  # pylint: disable=unused-argument
         """Method to process websocket open."""
         logger = logging.getLogger(__name__)
         logger.debug("Websocket client connected.")
-        global_value.check_websocket_if_connect = 1
+        self.api.context.check_websocket_if_connect = 1
 
-    def on_close(self, close_status_code=None, close_msg=None):
+    def on_close(self, wss=None, close_status_code=None, close_msg=None):
         """Called when websocket connection is closed.
         
         :param close_status_code: Status code for close connection.

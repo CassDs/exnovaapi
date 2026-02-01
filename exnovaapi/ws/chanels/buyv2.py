@@ -1,6 +1,5 @@
 """Module for exnova buyV2 websocket chanel."""
 from datetime import datetime, timedelta
-import exnovaapi.global_value as global_value
 from exnovaapi.ws.chanels.base import Base
 from exnovaapi.expiration import get_expiration_time
 
@@ -32,7 +31,7 @@ class Buyv2(Base):
             "exp": int(exp),
             "type": option,
             "direction": direction.lower(),
-            "user_balance_id": int(global_value.balance_id),
+            "user_balance_id": int(self.api.context.balance_id),
             "time": self.api.timesync.server_timestamp
         }
 

@@ -3,7 +3,6 @@
 import datetime
 import time
 from exnovaapi.ws.chanels.base import Base
-import exnovaapi.global_value as global_value
 from random import randint
 # work for forex digit cfd(stock)
 
@@ -19,7 +18,7 @@ class Digital_options_place_digital_option(Base):
             "name": "digital-options.place-digital-option",
             "version": "1.0",
             "body": {
-                "user_balance_id": int(global_value.balance_id),
+                "user_balance_id": int(self.api.context.balance_id),
                 "instrument_id": str(instrument_id),
                 "amount": str(amount)
             }
@@ -55,7 +54,7 @@ class DigitalOptionsPlaceDigitalOptionV2(Base):
                 "asset_id": int(asset_id),
                 "instrument_id": instrument_id,
                 "instrument_index": 0,
-                "user_balance_id": int(global_value.balance_id)
+                "user_balance_id": int(self.api.context.balance_id)
             }
         }
 

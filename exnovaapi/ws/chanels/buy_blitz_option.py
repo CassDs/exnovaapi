@@ -1,6 +1,5 @@
 """Module for exnova buy blitz option websocket chanel."""
 import time
-import exnovaapi.global_value as global_value
 from exnovaapi.ws.chanels.base import Base
 from random import randint
 
@@ -32,7 +31,7 @@ class BuyBlitzOption(Base):
             "name": "binary-options.open-option",
             "version": "2.0",
             "body": {
-                "user_balance_id": int(global_value.balance_id),
+                "user_balance_id": int(self.api.context.balance_id),
                 "active_id": int(active_id),
                 "option_type_id": 12,  # 12 is for blitz option
                 "direction": direction.lower(),

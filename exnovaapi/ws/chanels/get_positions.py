@@ -1,7 +1,6 @@
 import datetime
 import time
 from exnovaapi.ws.chanels.base import Base
-import exnovaapi.global_value as global_value
 
 class Get_positions(Base):
     name = "sendMessage"
@@ -16,7 +15,7 @@ class Get_positions(Base):
             "name":name ,
             "body":{
                 "instrument_type":instrument_type,
-                "user_balance_id":int(global_value.balance_id)
+                "user_balance_id":int(self.api.context.balance_id)
                 }
         }
         self.send_websocket_request(self.name, data)
@@ -38,11 +37,11 @@ class Get_position_history(Base):
             "name":"get-position-history",
             "body":{
                 "instrument_type":instrument_type,
-                "user_balance_id":int(global_value.balance_id)
+                "user_balance_id":int(self.api.context.balance_id)
                 }
         }
         self.send_websocket_request(self.name, data)
- 
+
 class Get_position_history_v2(Base):
     name = "sendMessage"
     def __call__(self,instrument_types,limit,offset,start=0,end=0):
@@ -54,7 +53,7 @@ class Get_position_history_v2(Base):
                 "offset":offset,
                 "start":start,
                 "end":end,
-                "user_balance_id":int(global_value.balance_id)
+                "user_balance_id":int(self.api.context.balance_id)
                 }
         }
         self.send_websocket_request(self.name, data)

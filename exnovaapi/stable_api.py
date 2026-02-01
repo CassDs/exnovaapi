@@ -7,7 +7,7 @@ import time
 import json
 import logging
 import operator
-import exnovaapi.global_value as global_value
+# Note: global_value removed - using instance-level context via self.api.context
 from collections import defaultdict
 from collections import deque
 from exnovaapi.expiration import get_expiration_time, get_remaning_time
@@ -108,11 +108,11 @@ class Exnova:
             self.re_subscribe_stream()
 
             # ---------for async get name: "position-changed", microserviceName
-            while global_value.balance_id == None:
+            while self.api.context.balance_id == None:
                 pass
 
             self.position_change_all(
-                "subscribeMessage", global_value.balance_id)
+                "subscribeMessage", self.api.context.balance_id)
 
             self.order_changed_all("subscribeMessage")
             self.api.setOptions(1, True)
@@ -168,7 +168,7 @@ class Exnova:
         # True/False
         # if not connected, sometimes it's None, sometimes its '0', so
         # both will fall on this first case
-        if not global_value.check_websocket_if_connect:
+        if not self.api.context.check_websocket_if_connect:
             return False
         else:
             return True
@@ -411,11 +411,11 @@ class Exnova:
     def get_currency(self):
         balances_raw = self.get_balances()
         for balance in balances_raw["msg"]:
-            if balance["id"] == global_value.balance_id:
+            if balance["id"] == self.api.context.balance_id:
                 return balance["currency"]
 
     def get_balance_id(self):
-        return global_value.balance_id
+        return self.api.context.balance_id
 
     """ def get_balance(self):
         self.api.profile.balance = None
@@ -434,7 +434,7 @@ class Exnova:
 
         balances_raw = self.get_balances()
         for balance in balances_raw["msg"]:
-            if balance["id"] == global_value.balance_id:
+            if balance["id"] == self.api.context.balance_id:
                 return balance["amount"]
 
     def get_balances(self):
@@ -448,7 +448,7 @@ class Exnova:
         # self.api.profile.balance_type=None
         profile = self.get_profile_ansyc()
         for balance in profile.get("balances"):
-            if balance["id"] == global_value.balance_id:
+            if balance["id"] == self.api.context.balance_id:
                 if balance["type"] == 1:
                     return "REAL"
                 elif balance["type"] == 4:
@@ -480,11 +480,11 @@ class Exnova:
 
     def change_balance(self, Balance_MODE):
         def set_id(b_id):
-            if global_value.balance_id != None:
+            if self.api.context.balance_id != None:
                 self.position_change_all(
-                    "unsubscribeMessage", global_value.balance_id)
+                    "unsubscribeMessage", self.api.context.balance_id)
 
-            global_value.balance_id = b_id
+            self.api.context.balance_id = b_id
 
             self.position_change_all("subscribeMessage", b_id)
 

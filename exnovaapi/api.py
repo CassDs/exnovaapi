@@ -67,7 +67,7 @@ from exnovaapi.ws.objects.profile import Profile
 from exnovaapi.ws.objects.candles import Candles
 from exnovaapi.ws.objects.listinfodata import ListInfoData
 from exnovaapi.ws.objects.betinfo import Game_betinfo_data
-import exnovaapi.global_value as global_value
+from exnovaapi.context import ExnovaContext
 from collections import defaultdict
 
 
@@ -162,6 +162,9 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
         :param str password: The password of a exnova server.
         :param dict proxies: (optional) The http request proxies.
         """
+        # Create per-instance context to avoid global state conflicts
+        self.context = ExnovaContext()
+
         self.https_url = "https://{host}/api".format(host=host)
         self.wss_url = "wss://{host}/echo/websocket".format(host=host)
         self.websocket_client = None
@@ -272,12 +275,12 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
         data = json.dumps(dict(name=name,
                                msg=msg, request_id=request_id))
 
-        while (global_value.ssl_Mutual_exclusion or global_value.ssl_Mutual_exclusion_write) and no_force_send:
+        while (self.context.ssl_Mutual_exclusion or self.context.ssl_Mutual_exclusion_write) and no_force_send:
             pass
-        global_value.ssl_Mutual_exclusion_write = True
+        self.context.ssl_Mutual_exclusion_write = True
         self.websocket.send(data)
         logger.debug(data)
-        global_value.ssl_Mutual_exclusion_write = False
+        self.context.ssl_Mutual_exclusion_write = False
 
     @property
     def logout(self):
@@ -783,9 +786,9 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
         requests.utils.add_dict_to_cookiejar(self.session.cookies, cookies)
 
     def start_websocket(self):
-        global_value.check_websocket_if_connect = None
-        global_value.check_websocket_if_error = False
-        global_value.websocket_error_reason = None
+        self.context.check_websocket_if_connect = None
+        self.context.check_websocket_if_error = False
+        self.context.websocket_error_reason = None
 
         self.websocket_client = WebsocketClient(self)
 
@@ -795,11 +798,11 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
         self.websocket_thread.start()
         while True:
             try:
-                if global_value.check_websocket_if_error:
-                    return False, global_value.websocket_error_reason
-                if global_value.check_websocket_if_connect == 0:
+                if self.context.check_websocket_if_error:
+                    return False, self.context.websocket_error_reason
+                if self.context.check_websocket_if_connect == 0:
                     return False, "Websocket connection closed."
-                elif global_value.check_websocket_if_connect == 1:
+                elif self.context.check_websocket_if_connect == 1:
                     return True, None
             except:
                 pass
@@ -833,7 +836,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
 
     def send_ssid(self):
         self.profile.msg = None
-        self.ssid(global_value.SSID)  # pylint: disable=not-callable
+        self.ssid(self.context.SSID)  # pylint: disable=not-callable
         while self.profile.msg == None:
             pass
         if self.profile.msg == False:
@@ -843,8 +846,8 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
 
     def connect(self):
 
-        global_value.ssl_Mutual_exclusion = False
-        global_value.ssl_Mutual_exclusion_write = False
+        self.context.ssl_Mutual_exclusion = False
+        self.context.ssl_Mutual_exclusion_write = False
         """Method for connection to exnova API."""
         try:
             self.close()
@@ -856,7 +859,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
             return check_websocket, websocket_reason
 
         # doing temp ssid reconnect for speed up
-        if global_value.SSID != None:
+        if self.context.SSID != None:
 
             check_ssid = self.send_ssid()
 
@@ -864,7 +867,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
                 # ssdi time out need reget,if sent error ssid,the weksocket will close by iqoption server
                 response = self.get_ssid()
                 try:
-                    global_value.SSID = response.cookies["ssid"]
+                    self.context.SSID = response.cookies["ssid"]
                 except:
                     return False, response.text
                 atexit.register(self.logout)
@@ -875,7 +878,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
         else:
             response = self.get_ssid()
             try:
-                global_value.SSID = response.cookies["ssid"]
+                self.context.SSID = response.cookies["ssid"]
             except:
                 self.close()
                 return False, response.text
@@ -884,7 +887,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
 
         # set ssis cookie
         requests.utils.add_dict_to_cookiejar(
-            self.session.cookies, {"ssid": global_value.SSID})
+            self.session.cookies, {"ssid": self.context.SSID})
 
         self.timesync.server_timestamp = None
         while True:

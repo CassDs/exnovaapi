@@ -1,5 +1,4 @@
 """Module for Exnova websocket."""
-import exnovaapi.global_value as global_value
 
 def profile(api, message):
     if message["name"] == "profile":
@@ -10,11 +9,11 @@ def profile(api, message):
                 api.profile.balance = message["msg"]["balance"]
             except:
                 pass
-            # Set Default account
-            if global_value.balance_id == None:
+            # Set Default account (using instance context instead of global)
+            if api.context.balance_id == None:
                 for balance in message["msg"]["balances"]:
                     if balance["type"] == 4:
-                        global_value.balance_id = balance["id"]
+                        api.context.balance_id = balance["id"]
                         break
             try:
                 api.profile.balance_id = message["msg"]["balance_id"]

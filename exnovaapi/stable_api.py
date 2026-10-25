@@ -85,7 +85,6 @@ class Exnova:
             pass
             # logging.error('**warning** self.api.close() fail')
 
-        # Update the host - Try different endpoint format
         self.api = ExnovaAPI(
             "ws.trade.exnova.com", self.email, self.password)
         check = None
@@ -140,26 +139,18 @@ class Exnova:
             # self.get_balance_id()
             return True, None
         else:
-            try:
-                if reason and isinstance(reason, str) and reason.strip() != "":
-                    reason_json = json.loads(reason)
-                    if 'code' in reason_json and reason_json['code'] == 'verify':
-                        response = self.api.send_sms_code(reason_json['token'])
-                        
-                        if response.json()['code'] != 'success':
-                            return False, response.json()['message']
-                        
-                        # token_sms
-                        self.resp_sms = response
-                        return False, "2FA"
-            except json.JSONDecodeError:
-                logging.error(f"Failed to decode JSON: {reason}")
-                return False, f"Falha na conexão: {reason}"
-            except Exception as e:
-                logging.error(f"Error in connect: {e}")
-                return False, f"Erro na conexão: {e}"
-                
+            if json.loads(reason)['code'] == 'verify':
+                response = self.api.send_sms_code(json.loads(reason)['token'])
+
+                if response.json()['code'] != 'success':
+                    return False, response.json()['message']
+
+                # token_sms
+                self.resp_sms = response
+                return False, "2FA"
             return False, reason
+
+    # self.update_ACTIVES_OPCODE()
 
     def connect_2fa(self, sms_code):
         return self.connect(sms_code=sms_code)
@@ -179,6 +170,14 @@ class Exnova:
         return OP_code.ACTIVES
 
     def update_ACTIVES_OPCODE(self):
+        self.instruments_input_all_in_ACTIVES()
+        self.get_ALL_Binary_ACTIVES_OPCODE()
+        dicc = {}
+        for lis in sorted(OP_code.ACTIVES.items(), key=operator.itemgetter(1)):
+            dicc[lis[0]] = lis[1]
+        OP_code.ACTIVES = dicc
+
+    def _legacy_update_ACTIVES_OPCODE(self):
         # update from binary option
         self.get_ALL_Binary_ACTIVES_OPCODE()
         # crypto /dorex/cfd
@@ -213,7 +212,30 @@ class Exnova:
             pass
         return self.api.leaderboard_deals_client
 
-    def get_instruments(self, type):
+    def get_instruments(self, type, force_refresh=False):
+        cache_attr = "_instruments_cache"
+        if not hasattr(self, cache_attr):
+            self._instruments_cache = {}
+        now = time.time()
+        if not force_refresh and type in self._instruments_cache:
+            cached_ts, cached_val = self._instruments_cache[type]
+            if now - cached_ts < 60 and cached_val is not None:
+                self.api.instruments = cached_val
+                return cached_val
+        self.api.instruments = None
+        while self.api.instruments is None:
+            try:
+                self.api.get_instruments(type)
+                start = time.time()
+                while self.api.instruments is None and time.time() - start < 10:
+                    time.sleep(0.005)
+            except Exception:
+                logging.error('**error** api.get_instruments need reconnect')
+                self.connect()
+        self._instruments_cache[type] = (time.time(), self.api.instruments)
+        return self.api.instruments
+
+    def _legacy_get_instruments(self, type):
         # type="crypto"/"forex"/"cfd"
         time.sleep(self.suspend)
         self.api.instruments = None
@@ -239,6 +261,29 @@ class Exnova:
         self.instruments_input_to_ACTIVES("cfd")
 
     def get_ALL_Binary_ACTIVES_OPCODE(self):
+        init_info = self.get_all_init_v2()
+        if init_info:
+            for dirr in ("binary", "turbo", "blitz"):
+                if dirr in init_info and "actives" in init_info[dirr]:
+                    for i, act in init_info[dirr]["actives"].items():
+                        name = str(act.get("name", i)).split(".", 1)[-1]
+                        aid = int(i)
+                        OP_code.ACTIVES[name] = aid
+                        if name.endswith("-op"):
+                            OP_code.ACTIVES[name[:-3]] = aid
+        return OP_code.ACTIVES
+
+    def _old_get_ALL_Binary_ACTIVES_OPCODE(self):
+        init_info = self.get_all_init_v2()
+        if init_info:
+            for dirr in ("binary", "turbo", "blitz"):
+                if dirr in init_info and "actives" in init_info[dirr]:
+                    for i, act in init_info[dirr]["actives"].items():
+                        name = str(act.get("name", i)).split(".", 1)[-1]
+                        OP_code.ACTIVES[name] = int(i)
+        return OP_code.ACTIVES
+
+    def _legacy_get_ALL_Binary_ACTIVES_OPCODE(self):
         init_info = self.get_all_init()
         for dirr in (["binary", "turbo"]):
             for i in init_info["result"][dirr]["actives"]:
@@ -247,6 +292,12 @@ class Exnova:
 
     # _________________________self.api.get_api_option_init_all() wss______________________
     def get_all_init(self):
+        v2 = self.get_all_init_v2()
+        if v2 is not None:
+            return {"isSuccessful": True, "result": v2}
+        return None
+
+    def _legacy_get_all_init(self):
 
         while True:
             self.api.api_option_init_all_result = None
@@ -274,7 +325,31 @@ class Exnova:
             except:
                 pass
 
-    def get_all_init_v2(self):
+    def get_all_init_v2(self, force_refresh=False):
+        now = time.time()
+        if (
+            not force_refresh
+            and getattr(self, "_init_v2_cache_ts", 0) > 0
+            and (now - self._init_v2_cache_ts) < 60
+            and self.api.api_option_init_all_result_v2
+        ):
+            return self.api.api_option_init_all_result_v2
+
+        self.api.api_option_init_all_result_v2 = None
+        if self.check_connect() is False:
+            self.connect()
+
+        self.api.get_api_option_init_all_v2()
+        start_t = time.time()
+        while self.api.api_option_init_all_result_v2 is None:
+            if time.time() - start_t >= 30:
+                logging.error('**warning** get_all_init_v2 late 30 sec')
+                return None
+            time.sleep(0.005)
+        self._init_v2_cache_ts = time.time()
+        return self.api.api_option_init_all_result_v2
+
+    def _legacy_get_all_init_v2(self):
         self.api.api_option_init_all_result_v2 = None
 
         if self.check_connect() == False:
@@ -293,6 +368,28 @@ class Exnova:
     # ------- chek if binary/digit/cfd/stock... if open or not
 
     def __get_binary_open(self):
+        binary_data = self.get_all_init_v2()
+        now_ts = self.get_server_timestamp()
+        if binary_data:
+            for option in ("binary", "turbo", "blitz"):
+                if option in binary_data and "actives" in binary_data[option]:
+                    for actives_id, active in binary_data[option]["actives"].items():
+                        name = str(active.get("name", actives_id)).split(".", 1)[-1]
+                        enabled = bool(active.get("enabled")) and not bool(active.get("is_suspended"))
+                        sched = active.get("schedule")
+                        if enabled and isinstance(sched, list) and sched:
+                            in_sched = any(
+                                (isinstance(s, (list, tuple)) and len(s) >= 2 and s[0] <= now_ts <= s[1])
+                                or (isinstance(s, dict) and s.get("open", 0) <= now_ts <= s.get("close", 0))
+                                for s in sched
+                            )
+                            enabled = in_sched
+                        self.OPEN_TIME[option][name]["open"] = enabled
+                        if name.endswith("-op"):
+                            self.OPEN_TIME[option][name[:-3]]["open"] = enabled
+        return
+
+    def _legacy_get_binary_open(self):
         # for turbo and binary pairs
         binary_data = self.get_all_init_v2()
         binary_list = ["binary", "turbo"]
@@ -311,6 +408,32 @@ class Exnova:
                             self.OPEN_TIME[option][name]["open"] = active["enabled"]    
 
     def __get_digital_open(self):
+        digital_data = (self.get_digital_underlying_list_data() or {}).get("underlying", [])
+        now_ts = self.get_server_timestamp()
+        for digital in digital_data:
+            name = digital["underlying"]
+            if digital.get("active_id"):
+                OP_code.ACTIVES[name] = int(digital["active_id"])
+                if name.endswith("-op"):
+                    OP_code.ACTIVES[name[:-3]] = int(digital["active_id"])
+            if digital.get("is_suspended"):
+                self.OPEN_TIME["digital"][name]["open"] = False
+                if name.endswith("-op"):
+                    self.OPEN_TIME["digital"][name[:-3]]["open"] = False
+                continue
+            schedule = digital.get("schedule") or []
+            is_open = any(
+                s.get("open", 0) <= now_ts <= s.get("close", 0) for s in schedule
+            )
+            self.OPEN_TIME["digital"][name]["open"] = is_open
+            if name.endswith("-op"):
+                self.OPEN_TIME["digital"][name[:-3]]["open"] = is_open
+        return
+
+    def _old_get_digital_open(self):
+        return
+
+    def _legacy_get_digital_open(self):
         # for digital options
         digital_data = self.get_digital_underlying_list_data()["underlying"]
         for digital in digital_data:
@@ -324,6 +447,21 @@ class Exnova:
                     self.OPEN_TIME["digital"][name]["open"] = True
 
     def __get_other_open(self):
+        now_ts = self.get_server_timestamp()
+        for instruments_type in ("cfd", "forex", "crypto"):
+            ins_data = (self.get_instruments(instruments_type) or {}).get("instruments", [])
+            for detail in ins_data:
+                name = detail["name"]
+                if detail.get("is_suspended"):
+                    self.OPEN_TIME[instruments_type][name]["open"] = False
+                    continue
+                schedule = detail.get("schedule") or []
+                self.OPEN_TIME[instruments_type][name]["open"] = any(
+                    s.get("open", 0) <= now_ts <= s.get("close", 0) for s in schedule
+                )
+        return
+
+    def _legacy_get_other_open(self):
         # Crypto and etc pairs
         instrument_list = ["cfd", "forex", "crypto"]
         for instruments_type in instrument_list:
@@ -354,6 +492,19 @@ class Exnova:
 
     def get_binary_option_detail(self):
         detail = nested_dict(2, dict)
+        init_info = self.get_all_init_v2()
+        if init_info:
+            for opt_type in ("turbo", "binary", "blitz"):
+                if opt_type in init_info and "actives" in init_info[opt_type]:
+                    for _, act in init_info[opt_type]["actives"].items():
+                        name = str(act.get("name", "")).split(".", 1)[-1]
+                        detail[name][opt_type] = act
+                        if name.endswith("-op"):
+                            detail[name[:-3]][opt_type] = act
+        return detail
+
+    def _legacy_get_binary_option_detail(self):
+        detail = nested_dict(2, dict)
         init_info = self.get_all_init()
         for actives in init_info["result"]["turbo"]["actives"]:
             name = init_info["result"]["turbo"]["actives"][actives]["name"]
@@ -367,6 +518,25 @@ class Exnova:
         return detail
 
     def get_all_profit(self):
+        all_profit = nested_dict(2, dict)
+        init_info = self.get_all_init_v2()
+        if init_info:
+            for opt_type in ("turbo", "binary", "blitz"):
+                if opt_type in init_info and "actives" in init_info[opt_type]:
+                    for _, act in init_info[opt_type]["actives"].items():
+                        try:
+                            name = str(act.get("name", "")).split(".", 1)[-1]
+                            comm = act["option"]["profit"]["commission"]
+                            if comm is not None and comm < 100:
+                                val_p = (100.0 - float(comm)) / 100.0
+                                all_profit[name][opt_type] = val_p
+                                if name.endswith("-op"):
+                                    all_profit[name[:-3]][opt_type] = val_p
+                        except Exception:
+                            pass
+        return all_profit
+
+    def _legacy_get_all_profit(self):
         all_profit = nested_dict(2, dict)
         init_info = self.get_all_init()
         for actives in init_info["result"]["turbo"]["actives"]:
@@ -627,6 +797,15 @@ class Exnova:
             time.sleep(1)
 
     def stop_candles_one_stream(self, ACTIVE, size):
+        key = ACTIVE + "," + str(size)
+        if key in self.subscribe_candle:
+            self.subscribe_candle.remove(key)
+        self.api.unsubscribe(OP_code.ACTIVES[ACTIVE], size)
+        time.sleep(0.3)
+        self.api.candle_generated_check[str(ACTIVE)][int(size)] = {}
+        return True
+
+    def _legacy_stop_candles_one_stream(self, ACTIVE, size):
         if ((ACTIVE + "," + str(size)) in self.subscribe_candle) == True:
             self.subscribe_candle.remove(ACTIVE + "," + str(size))
         while True:
@@ -665,6 +844,14 @@ class Exnova:
             time.sleep(1)
 
     def stop_candles_all_size_stream(self, ACTIVE):
+        if str(ACTIVE) in self.subscribe_candle_all_size:
+            self.subscribe_candle_all_size.remove(str(ACTIVE))
+        self.api.unsubscribe_all_size(OP_code.ACTIVES[ACTIVE])
+        time.sleep(0.3)
+        self.api.candle_generated_all_size_check[str(ACTIVE)] = {}
+        return True
+
+    def _legacy_stop_candles_all_size_stream(self, ACTIVE):
         if (str(ACTIVE) in self.subscribe_candle_all_size) == True:
             self.subscribe_candle_all_size.remove(str(ACTIVE))
         while True:
@@ -708,7 +895,20 @@ class Exnova:
     # -----------------traders_mood----------------------
 
     def start_mood_stream(self, ACTIVES, instrument="turbo-option"):
-        if ACTIVES in self.subscribe_mood == False:
+        if ACTIVES not in self.subscribe_mood:
+            self.subscribe_mood.append(ACTIVES)
+        active_id = OP_code.ACTIVES[ACTIVES]
+        self.api.subscribe_Traders_mood(active_id, instrument)
+        start_t = time.time()
+        while active_id not in self.api.traders_mood:
+            if time.time() - start_t > 4.0:
+                self.api.traders_mood[active_id] = 0.5
+                break
+            time.sleep(0.1)
+        return self.api.traders_mood[active_id]
+
+    def _legacy_start_mood_stream(self, ACTIVES, instrument="turbo-option"):
+        if ACTIVES not in self.subscribe_mood:
             self.subscribe_mood.append(ACTIVES)
 
         while True:
@@ -721,7 +921,9 @@ class Exnova:
                 time.sleep(5)
 
     def stop_mood_stream(self, ACTIVES, instrument="turbo-option"):
-        if ACTIVES in self.subscribe_mood == True:
+        if ACTIVES in self.subscribe_mood:
+            self.subscribe_mood.remove(ACTIVES)
+        if False:
             del self.subscribe_mood[ACTIVES]
         self.api.unsubscribe_Traders_mood(OP_code.ACTIVES[ACTIVES], instrument)
 
@@ -781,7 +983,7 @@ class Exnova:
                     pass
             time.sleep(polling_time)
 
-        # Function by kkagill ( https://github.com/Lu-Yi-Hsun/exnovaAPI/issues/196 | https://github.com/kkagill )
+        # Function by kkagill ( https://github.com/Lu-Yi-Hsun/exnovaapi/issues/196 | https://github.com/kkagill )
         # Function only work with Options!
 
     def check_win_v4(self, id_number):
@@ -795,6 +997,19 @@ class Exnova:
         return x['msg']['win'], (0 if x['msg']['win'] == 'equal' else float(x['msg']['sum']) * -1 if x['msg']['win'] == 'loose' else float(x['msg']['win_amount']) - float(x['msg']['sum']))
 
     def check_win_v3(self, id_number):
+        while True:
+            result = self.get_optioninfo_v2(20)
+            closed_list = result.get("msg", {}).get("closed_options", []) if isinstance(result, dict) else []
+            for opt in closed_list:
+                opt_id = opt.get("id")
+                matched = (opt_id == id_number) or (isinstance(opt_id, list) and id_number in opt_id)
+                if matched and opt_id is not None:
+                    win_state = opt.get("win")
+                    pnl = (float(opt.get("win_amount", 0)) - float(opt.get("amount", 0))) if win_state != "equal" else 0.0
+                    return win_state, pnl
+            time.sleep(1)
+
+    def _legacy_check_win_v3(self, id_number):
         while True:
             result = self.get_optioninfo_v2(10)
             if result['msg']['closed_options'][0]['id'][0] == id_number and result['msg']['closed_options'][0]['id'][0] != None:
@@ -953,7 +1168,27 @@ class Exnova:
         return self.api.sold_digital_options_respond
 # __________________for Digital___________________
 
-    def get_digital_underlying_list_data(self):
+    def get_digital_underlying_list_data(self, force_refresh=False):
+        now = time.time()
+        if (
+            not force_refresh
+            and getattr(self, "_digital_und_cache_ts", 0) > 0
+            and (now - self._digital_und_cache_ts) < 60
+            and self.api.underlying_list_data is not None
+        ):
+            return self.api.underlying_list_data
+        self.api.underlying_list_data = None
+        self.api.get_digital_underlying()
+        start_t = time.time()
+        while self.api.underlying_list_data is None:
+            if time.time() - start_t >= 30:
+                logging.error('**warning** get_digital_underlying_list_data late 30 sec')
+                return None
+            time.sleep(0.005)
+        self._digital_und_cache_ts = time.time()
+        return self.api.underlying_list_data
+
+    def _legacy_get_digital_underlying_list_data(self):
         self.api.underlying_list_data = None
         self.api.get_digital_underlying()
         start_t = time.time()
@@ -1040,7 +1275,7 @@ class Exnova:
         return False
 
     # thank thiagottjv
-    # https://github.com/Lu-Yi-Hsun/exnovaAPI/issues/65#issuecomment-513998357
+    # https://github.com/Lu-Yi-Hsun/exnovaapi/issues/65#issuecomment-513998357
 
     def buy_digital_spot(self, active, amount, action, duration):
         # Expiration time need to be formatted like this: YYYYMMDDHHII
@@ -1617,8 +1852,52 @@ class Exnova:
             return True, digital_order_id
         else:
             return False, digital_order_id
-
+        
     def buy_blitz(self, active, price, direction, expiration):
+        self.api.buy_multi_option = {}
+        self.api.buy_successful = None
+
+        if isinstance(active, str):
+            if active not in OP_code.ACTIVES:
+                self.get_ALL_Binary_ACTIVES_OPCODE()
+            active_id = OP_code.ACTIVES[active]
+        else:
+            active_id = active
+
+        profit_percent = self.get_blitz_payout(active)
+        value = None
+
+        for attempt in range(2):
+            request_id = str(randint(0, 10000))
+            self.api.result = None
+            self.api.buy_blitz_option(price, active_id, direction, expiration, profit_percent, value, request_id)
+            start_t = time.time()
+            order_id = None
+            retry_comm = None
+
+            while self.api.result is None or order_id is None:
+                resp = self.api.buy_multi_option.get(request_id)
+                if isinstance(resp, dict):
+                    if "id" in resp and resp["id"] is not None:
+                        order_id = resp["id"]
+                    elif "message" in resp:
+                        act_comm = resp.get("result", {}).get("actual_commission", {}).get("commission")
+                        if act_comm is not None and attempt == 0:
+                            retry_comm = 100 - int(act_comm)
+                            break
+                        return False, resp["message"]
+                if time.time() - start_t >= 5:
+                    return False, None
+                time.sleep(0.01)
+
+            if retry_comm is not None:
+                profit_percent = retry_comm
+                continue
+            return self.api.result, order_id
+
+        return False, None
+
+    def _legacy_buy_blitz(self, active, price, direction, expiration):
         """Buy a blitz option.
         
         :param active: The asset name.
@@ -1678,7 +1957,7 @@ class Exnova:
             # Tenta pegar o payout mais adequado (turbo, binary, etc)
             if active in all_profit:
                 # Priorize turbo, depois binary, depois qualquer outro
-                for key in ["turbo", "binary"]:
+                for key in ["blitz", "turbo", "binary"]:
                     if key in all_profit[active]:
                         return int(all_profit[active][key] * 100)
                 # Se não houver turbo/binary, pega o primeiro disponível
@@ -1687,3 +1966,4 @@ class Exnova:
         except Exception as e:
             logging.warning(f"Não foi possível obter payout para {active}: {e}")
         return 85  # valor padrão se não conseguir
+

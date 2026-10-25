@@ -517,7 +517,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
 
         elif name == "portfolio.get-positions":
             msg = {"name": name,
-                   "version": "3.0",
+                   "version": "4.0",
                    "body": {
                        "instrument_type": str(instrument_type),
                        "limit": int(limit),
@@ -627,7 +627,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
     def get_api_option_init_all_v2(self):
 
         msg = {"name": "get-initialization-data",
-               "version": "3.0",
+               "version": "4.0",
                "body": {}
                }
         self.send_websocket_request(name="sendMessage", msg=msg)
@@ -685,9 +685,9 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
 # ____________________for_______digital____________________
 
     def get_digital_underlying(self):
-        msg = {"name": "get-underlying-list",
-               "version": "2.0",
-               "body": {"type": "digital-option"}
+        msg = {"name": "digital-option-instruments.get-underlying-list",
+               "version": "3.0",
+               "body": {"filter_suspended": True}
                }
         self.send_websocket_request(name="sendMessage", msg=msg)
 
@@ -790,7 +790,7 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
         self.websocket_client = WebsocketClient(self)
 
         self.websocket_thread = threading.Thread(target=self.websocket.run_forever, kwargs={'sslopt': {
-                                                 "check_hostname": False, "cert_reqs": ssl.CERT_NONE, "ca_certs": "cacert.pem"}})  # for fix pyinstall error: cafile, capath and cadata cannot be all omitted
+                                                 "check_hostname": False, "cert_reqs": ssl.CERT_NONE}})  # for fix pyinstall error: cafile, capath and cadata cannot be all omitted
         self.websocket_thread.daemon = True
         self.websocket_thread.start()
         while True:
@@ -841,58 +841,66 @@ class ExnovaAPI(object):  # pylint: disable=too-many-instance-attributes
         else:
             return True
 
-    def connect(self):
+    @staticmethod
+    def _extract_ssid(response):
+        if response is None:
+            return None
+        try:
+            if "ssid" in response.cookies:
+                return response.cookies["ssid"]
+        except Exception:
+            pass
+        try:
+            data = response.json()
+            if isinstance(data, dict) and data.get("ssid"):
+                return data["ssid"]
+        except Exception:
+            pass
+        return None
 
+    def connect(self):
         global_value.ssl_Mutual_exclusion = False
         global_value.ssl_Mutual_exclusion_write = False
-        """Method for connection to exnova API."""
         try:
             self.close()
-        except:
+        except Exception:
             pass
-        check_websocket, websocket_reason = self.start_websocket()
 
-        if check_websocket == False:
+        self.timesync.server_timestamp = None
+
+        if global_value.SSID is None:
+            response = self.get_ssid()
+            ssid_val = self._extract_ssid(response)
+            if not ssid_val:
+                return False, getattr(response, "text", str(response))
+            global_value.SSID = ssid_val
+            atexit.register(self.logout)
+
+        check_websocket, websocket_reason = self.start_websocket()
+        if check_websocket is False:
             return check_websocket, websocket_reason
 
-        # doing temp ssid reconnect for speed up
-        if global_value.SSID != None:
-
-            check_ssid = self.send_ssid()
-
-            if check_ssid == False:
-                # ssdi time out need reget,if sent error ssid,the weksocket will close by iqoption server
-                response = self.get_ssid()
-                try:
-                    global_value.SSID = response.cookies["ssid"]
-                except:
-                    return False, response.text
-                atexit.register(self.logout)
-                self.start_websocket()
-                self.send_ssid()
-
-        # the ssid is None need get ssid
-        else:
+        check_ssid = self.send_ssid()
+        if check_ssid is False:
             response = self.get_ssid()
-            try:
-                global_value.SSID = response.cookies["ssid"]
-            except:
-                self.close()
-                return False, response.text
+            ssid_val = self._extract_ssid(response)
+            if not ssid_val:
+                return False, getattr(response, "text", str(response))
+            global_value.SSID = ssid_val
             atexit.register(self.logout)
+            self.start_websocket()
             self.send_ssid()
 
-        # set ssis cookie
         requests.utils.add_dict_to_cookiejar(
             self.session.cookies, {"ssid": global_value.SSID})
 
-        self.timesync.server_timestamp = None
         while True:
             try:
-                if self.timesync.server_timestamp != None:
+                if self.timesync.server_timestamp is not None:
                     break
-            except:
+            except Exception:
                 pass
+            time.sleep(0.005)
         return True, None
 
     def connect2fa(self, sms_code):
